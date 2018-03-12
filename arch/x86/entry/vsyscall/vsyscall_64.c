@@ -42,10 +42,8 @@
 #define CREATE_TRACE_POINTS
 #include "vsyscall_trace.h"
 
-static enum { EMULATE, NATIVE, NONE } vsyscall_mode =
-#if defined(CONFIG_LEGACY_VSYSCALL_NATIVE)
-	NATIVE;
-#elif defined(CONFIG_LEGACY_VSYSCALL_NONE)
+static enum { EMULATE, NONE } vsyscall_mode =
+#ifdef CONFIG_LEGACY_VSYSCALL_NONE
 	NONE;
 #else
 	EMULATE;
@@ -56,8 +54,6 @@ static int __init vsyscall_setup(char *str)
 	if (str) {
 		if (!strcmp("emulate", str))
 			vsyscall_mode = EMULATE;
-		else if (!strcmp("native", str))
-			vsyscall_mode = NATIVE;
 		else if (!strcmp("none", str))
 			vsyscall_mode = NONE;
 		else
@@ -138,10 +134,6 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 	 */
 
 	WARN_ON_ONCE(address != regs->ip);
-
-	/* This should be unreachable in NATIVE mode. */
-	if (WARN_ON(vsyscall_mode == NATIVE))
-		return false;
 
 	if (vsyscall_mode == NONE) {
 		warn_bad_vsyscall(KERN_INFO, regs,
@@ -344,14 +336,14 @@ int in_gate_area_no_mm(unsigned long addr)
  * vsyscalls but leave the page not present.  If so, we skip calling
  * this.
  */
-static void __init set_vsyscall_pgtable_user_bits(void)
+void __init set_vsyscall_pgtable_user_bits(pgd_t *root)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pgd = pgd_offset_k(VSYSCALL_ADDR);
+	pgd = pgd_offset_pgd(root, VSYSCALL_ADDR);
 	set_pgd(pgd, __pgd(pgd_val(*pgd) | _PAGE_USER));
 	p4d = p4d_offset(pgd, VSYSCALL_ADDR);
 #if CONFIG_PGTABLE_LEVELS >= 5
@@ -370,10 +362,8 @@ void __init map_vsyscall(void)
 
 	if (vsyscall_mode != NONE) {
 		__set_fixmap(VSYSCALL_PAGE, physaddr_vsyscall,
-			     vsyscall_mode == NATIVE
-			     ? PAGE_KERNEL_VSYSCALL
-			     : PAGE_KERNEL_VVAR);
-		set_vsyscall_pgtable_user_bits();
+			     PAGE_KERNEL_VVAR);
+		set_vsyscall_pgtable_user_bits(swapper_pg_dir);
 	}
 
 	BUILD_BUG_ON((unsigned long)__fix_to_virt(VSYSCALL_PAGE) !=
